@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Vanguard - Space Shooter</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #050508;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            box-shadow: 0 0 30px rgba(0, 204, 255, 0.3);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #1a2a3a;
+        }
+        canvas {
+            display: block;
+            background: #000000;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+        }
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.8);
+        }
+        .hud-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+        .health-bar-container {
+            width: 200px;
+            height: 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid #00ffff;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #health-bar {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #ff0055, #00ffcc);
+            transition: width 0.2s ease;
+        }
+        .weapon-indicator {
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #335577;
+        }
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(5, 5, 12, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(4px);
+        }
+        #game-over-screen h1 {
+            font-size: 48px;
+            color: #ff0055;
+            text-shadow: 0 0 15px #ff0055;
+            margin-bottom: 10px;
+        }
+        .btn {
+            margin-top: 20px;
+            padding: 12px 28px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #000;
+            background: #00ffcc;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            box-shadow: 0 0 15px #00ffcc;
+            transition: transform 0.2s, background 0.2s;
+            pointer-events: auto;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+            background: #ffffff;
+        }
+        .controls-hint {
+            margin-top: 15px;
+            font-size: 12px;
+            color: #88aacc;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div>SCORE: <span id="score-val">0</span></div>
+            <div>WAVE: <span id="wave-val">1</span></div>
+        </div>
+        <div class="hud-bottom">
+            <div>
+                <div style="font-size: 12px; margin-bottom: 4px; color: #00ffff;">HULL INTEGRITY</div>
+                <div class="health-bar-container">
+                    <div id="health-bar"></div>
+                </div>
+            </div>
+            <div class="weapon-indicator">
+                WEAPON: <span id="weapon-name" style="color: #00ffcc; font-weight: bold;">PLASMA PULSE</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-over-screen">
+        <h1 id="main-title">COSMIC VANGUARD</h1>
+        <p id="final-score" style="margin-bottom: 10px; color: #aaa;"></p>
+        <button class="btn" id="start-btn" onclick="startGame()">START MISSION</button>
+        <div class="controls-hint">
+            [W A S D / Arrows] Move &nbsp;|&nbsp; [Space / Left Click] Shoot &nbsp;|&nbsp; [1, 2, 3] Switch Weapons
+        </div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// UI Elements
+const scoreEl = document.getElementById('score-val');
+const waveEl = document.getElementById('wave-val');
+const healthBar = document.getElementById('health-bar');
+const weaponNameEl = document.getElementById('weapon-name');
+const gameOverScreen = document.getElementById('game-over-screen');
+const mainTitle = document.getElementById('main-title');
+const finalScoreEl = document.getElementById('final-score');
+const startBtn = document.getElementById('start-btn');
+
+// Game State
+let isRunning = false;
+let score = 0;
+let wave = 1;
+let animationFrameId;
+
+// Input Handling
+const keys = {};
+let mousePos = { x: 400, y: 300 };
+let isMouseDown = false;
+
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (e.code === 'Digit1') setWeapon(0);
+    if (e.code === 'Digit2') setWeapon(1);
+    if (e.code === 'Digit3') setWeapon(2);
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mousePos.x = e.clientX - rect.left;
+    mousePos.y = e.clientY - rect.top;
+});
+canvas.addEventListener('mousedown', e => { if (e.button === 0) isMouseDown = true; });
+canvas.addEventListener('mouseup', e => { if (e.button === 0) isMouseDown = false; });
+
+// Weapons Definition
+const WEAPONS = [
+    { name: "PLASMA PULSE", fireRate: 12, color: "#00ffcc", speed: 12, damage: 25, type: "single" },
+    { name: "SPREAD BASTER", fireRate: 18, color: "#ff00aa", speed: 10, damage: 18, type: "spread" },
+    { name: "HEAVY BEAM", fireRate: 6, color: "#ffcc00", speed: 16, damage: 10, type: "laser" }
+];
+let currentWeaponIdx = 0;
+let lastShotTime = 0;
+
+function setWeapon(idx) {
+    currentWeaponIdx = idx;
+    weaponNameEl.textContent = WEAPONS[idx].name;
+    weaponNameEl.style.color = WEAPONS[idx].color;
+}
+
+// Background Starfield
+const stars = Array.from({ length: 120 }, () => ({
+    x: Math.random() * canvas.width,
+    y: Math.random() * canvas.height,
+    size: Math.random() * 2 + 0.5,
+    speed: Math.random() * 3 + 0.5,
+    alpha: Math.random()
+}));
+
+// Player Ship Class
+class Player {
+    constructor() {
+        this.width = 40;
+        this.height = 40;
+        this.x = canvas.width / 2;
+        this.y = canvas.height - 80;
+        this.speed = 6;
+        this.maxHealth = 100;
+        this.health = 100;
+        this.thrusterFrame = 0;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+
+        // Animated Thruster Glow
+        this.thrusterFrame += 0.2;
+        const flameHeight = 12 + Math.sin(this.thrusterFrame) * 6;
+        const grad = ctx.createLinearGradient(0, 15, 0, 15 + flameHeight);
+        grad.addColorStop(0, '#00ffff');
+        grad.addColorStop(0.5, '#ff00aa');
+        grad.addColorStop(1, 'transparent');
+        
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(-8, 15);
+        ctx.lineTo(8, 15);
+        ctx.lineTo(0, 15 + flameHeight);
+        ctx.closePath();
+        ctx.fill();
+
+        // Ship Body Design
+        ctx.fillStyle = '#0a1526';
+        ctx.strokeStyle = '#00ffcc';
+        ctx.lineWidth = 2;
+
+        ctx.beginPath();
+        ctx.moveTo(0, -20);
+        ctx.lineTo(20, 15);
+        ctx.lineTo(8, 10);
+        ctx.lineTo(-8, 10);
+        ctx.lineTo(-20, 15);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Cockpit
+        ctx.fillStyle = '#00ffff';
+        ctx.beginPath();
+        ctx.arc(0, -2, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    update() {
+        // Keyboard Movement
+        if ((keys['ArrowLeft'] || keys['KeyA']) && this.x > this.width / 2) this.x -= this.speed;
+        if ((keys['ArrowRight'] || keys['KeyD']) && this.x < canvas.width - this.width / 2) this.x += this.speed;
+        if ((keys['ArrowUp'] || keys['KeyW']) && this.y > this.height / 2) this.y -= this.speed;
+        if ((keys['ArrowDown'] || keys['KeyS']) && this.y < canvas.height - this.height / 2) this.y += this.speed;
+
+        // Auto-shoot check
+        if ((keys['Space'] || isMouseDown) && Date.now() - lastShotTime > WEAPONS[currentWeaponIdx].fireRate * 10) {
+            this.shoot();
+            lastShotTime = Date.now();
+        }
+    }
+
+    shoot() {
+        const wP = WEAPONS[currentWeaponIdx];
+        if (wP.type === "single") {
+            bullets.push(new Bullet(this.x, this.y - 20, 0, -wP.speed, wP.color, wP.damage));
+        } else if (wP.type === "spread") {
+            bullets.push(new Bullet(this.x, this.y - 20, -2, -wP.speed, wP.color, wP.damage));
+            bullets.push(new Bullet(this.x, this.y - 20, 0, -wP.speed, wP.color, wP.damage));
+            bullets.push(new Bullet(this.x, this.y - 20, 2, -wP.speed, wP.color, wP.damage));
+        } else if (wP.type === "laser") {
+            bullets.push(new Bullet(this.x - 10, this.y - 15, 0, -wP.speed, wP.color, wP.damage, true));
+            bullets.push(new Bullet(this.x + 10, this.y - 15, 0, -wP.speed, wP.color, wP.damage, true));
+        }
+    }
+}
+
+// Animated Bullet / Projectile
+class Bullet {
+    constructor(x, y, vx, vy, color, damage, isLaser = false) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.damage = damage;
+        this.isLaser = isLaser;
+        this.life = 0;
+    }
+
+    draw() {
+        ctx.save();
+        this.life += 0.3;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+        ctx.fillStyle = this.color;
+
+        if (this.isLaser) {
+            ctx.fillRect(this.x - 2, this.y - 15, 4, 20);
+        } else {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 4 + Math.sin(this.life), 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+}
+
+// Dynamic Enemies (Scout, Interceptor, Destroyer)
+class Enemy {
+    constructor(type) {
+        this.type = type; // 1: Scout, 2: Interceptor, 3: Heavy
+        this.x = Math.random() * (canvas.width - 60) + 30;
+        this.y = -40;
+        this.time = Math.random() * 100;
+
+        if (type === 1) {
+            this.hp = 30;
+            this.speed = 3;
+            this.color = '#ff3366';
+            this.radius = 16;
+            this.scoreVal = 100;
+        } else if (type === 2) {
+            this.hp = 60;
+            this.speed = 2;
+            this.color = '#ff9900';
+            this.radius = 22;
+            this.scoreVal = 250;
+        } else {
+            this.hp = 150;
+            this.speed = 1;
+            this.color = '#aa00ff';
+            this.radius = 32;
+            this.scoreVal = 500;
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.strokeStyle = this.color;
+        ctx.fillStyle = '#110515';
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = this.color;
+
+        if (this.type === 1) {
+            // Fast Diamond Shape
+            ctx.beginPath();
+            ctx.moveTo(0, 15);
+            ctx.lineTo(-15, -15);
+            ctx.lineTo(0, -5);
+            ctx.lineTo(15, -15);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        } else if (this.type === 2) {
+            // Angular Fighter
+            ctx.beginPath();
+            ctx.moveTo(0, 20);
+            ctx.lineTo(-20, -10);
+            ctx.lineTo(-10, -20);
+            ctx.lineTo(10, -20);
+            ctx.lineTo(20, -10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        } else {
+            // Heavy Octagon
+            ctx.beginPath();
+            for (let i = 0; i < 8; i++) {
+                const angle = (i * Math.PI) / 4;
+                const px = Math.cos(angle) * this.radius;
+                const py = Math.sin(angle) * this.radius;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    }
+
+    update() {
+        this.time += 0.05;
+        this.y += this.speed;
+        
+        // Swaying movement for Scouts
+        if (this.type === 1) {
+            this.x += Math.sin(this.time) * 2;
+        }
+    }
+}
+
+// Particle Explosions
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.vx = (Math.random() - 0.5) * 6;
+        this.vy = (Math.random() - 0.5) * 6;
+        this.alpha = 1;
+        this.decay = Math.random() * 0.03 + 0.015;
+        this.size = Math.random() * 3 + 1;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha -= this.decay;
+    }
+}
+
+// Game Collections
+let player;
+let bullets = [];
+let enemies = [];
+let particles = [];
+let spawnTimer = 0;
+
+function createExplosion(x, y, color, count = 20) {
+    for (let i = 0; i < count; i++) {
+        particles.push(new Particle(x, y, color));
+    }
+}
+
+function spawnEnemies() {
+    spawnTimer++;
+    if (spawnTimer % Math.max(20, 80 - wave * 5) === 0) {
+        const rand = Math.random();
+        let type = 1;
+        if (rand > 0.6 && wave >= 2) type = 2;
+        if (rand > 0.85 && wave >= 3) type = 3;
+        enemies.push(new Enemy(type));
+    }
+}
+
+function updateGame() {
+    // 1. Starfield Background Scrolling
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    stars.forEach(star => {
+        star.y += star.speed;
+        if (star.y > canvas.height) {
+            star.y = 0;
+            star.x = Math.random() * canvas.width;
+        }
+        ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha})`;
+        ctx.fillRect(star.x, star.y, star.size, star.size);
+    });
+
+    if (!isRunning) return;
+
+    // 2. Player Processing
+    player.update();
+    player.draw();
+
+    // 3. Bullets Processing
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.update();
+        b.draw();
+
+        if (b.y < -20 || b.x < 0 || b.x > canvas.width) {
+            bullets.splice(i, 1);
+        }
+    }
+
+    // 4. Enemy Processing & Collisions
+    spawnEnemies();
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        e.update();
+        e.draw();
+
+        // Player Collision
+        const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
+        if (distToPlayer < e.radius + player.width / 3) {
+            player.health -= e.hp;
+            healthBar.style.width = Math.max(0, player.health) + '%';
+            createExplosion(e.x, e.y, e.color, 15);
+            enemies.splice(i, 1);
+
+            if (player.health <= 0) {
+                endGame();
+                return;
+            }
+            continue;
+        }
+
+        // Bullet Collision Check
+        for (let j = bullets.length - 1; j >= 0; j--) {
+            const b = bullets[j];
+            const distToBullet = Math.hypot(e.x - b.x, e.y - b.y);
+
+            if (distToBullet < e.radius + 6) {
+                e.hp -= b.damage;
+                createExplosion(b.x, b.y, b.color, 4);
+                bullets.splice(j, 1);
+
+                if (e.hp <= 0) {
+                    score += e.scoreVal;
+                    scoreEl.textContent = score;
+                    if (score > wave * 1500) {
+                        wave++;
+                        waveEl.textContent = wave;
+                    }
+                    createExplosion(e.x, e.y, e.color, 25);
+                    enemies.splice(i, 1);
+                }
+                break;
+            }
+        }
+
+        // Remove Off-screen Enemies
+        if (e.y > canvas.height + 50) {
+            enemies.splice(i, 1);
+        }
+    }
+
+    // 5. Particle Effects Update
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.update();
+        p.draw();
+        if (p.alpha <= 0) particles.splice(i, 1);
+    }
+
+    animationFrameId = requestAnimationFrame(updateGame);
+}
+
+function startGame() {
+    score = 0;
+    wave = 1;
+    scoreEl.textContent = score;
+    waveEl.textContent = wave;
+    healthBar.style.width = '100%';
+    
+    bullets = [];
+    enemies = [];
+    particles = [];
+    
+    player = new Player();
+    isRunning = true;
+    gameOverScreen.style.display = 'none';
+
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    updateGame();
+}
+
+function endGame() {
+    isRunning = false;
+    gameOverScreen.style.display = 'flex';
+    mainTitle.textContent = "MISSION FAILED";
+    finalScoreEl.textContent = `FINAL SCORE: ${score} | WAVES CLEARED: ${wave - 1}`;
+    startBtn.textContent = "REDEPLOY";
+}
+
+// Initial Static Render
+updateGame();
+</script>
+</body>
+</html>
