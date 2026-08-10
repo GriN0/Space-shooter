@@ -141,6 +141,25 @@
       font-size: 10px;
     }
 
+    #active-buffs {
+      position: absolute;
+      top: 75px;
+      right: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 10;
+    }
+    .buff-tag {
+      background: rgba(16, 185, 129, 0.2);
+      border: 1px solid #10b981;
+      color: #10b981;
+      font-size: 10px;
+      font-weight: bold;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
     /* Overlays */
     .overlay {
       position: absolute;
@@ -170,7 +189,6 @@
       text-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
     }
 
-    /* Device Selection Cards */
     .device-options {
       display: flex;
       gap: 16px;
@@ -199,7 +217,6 @@
       font-size: 32px;
     }
 
-    /* Loadout Selection Grid */
     .loadout-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -326,8 +343,9 @@
     </div>
   </div>
 
-  <!-- Active Weapon Slots HUD -->
+  <!-- Active Weapon & Buff Slots HUD -->
   <div id="weapon-bar"></div>
+  <div id="active-buffs"></div>
 
   <!-- Step 1: Device Mode Selection Screen -->
   <div id="device-overlay" class="overlay active">
@@ -360,8 +378,7 @@
     <h2>SYSTEM PAUSED</h2>
     <button class="btn btn-large" id="resume-btn">RESUME MISSION</button>
     <button class="btn btn-large" id="pause-retry-btn" style="border-color: #ef4444; color: #ef4444;">RETRY</button>
-    <!-- Portfolio Navigation Button (Absolute Domain Target) -->
-    <a href="https://grishanbaskota.com.np" class="btn btn-large" style="border-color: #a855f7; color: #a855f7;">🏠 PORTFOLIO WEBSITE</a>
+    <a href="index.html" class="btn btn-large" style="border-color: #a855f7; color: #a855f7;">🏠 PORTFOLIO WEBSITE</a>
   </div>
 
   <!-- Game Over Overlay -->
@@ -369,8 +386,7 @@
     <h2 style="color: #ef4444; text-shadow: 0 0 12px rgba(239, 68, 68, 0.6);">SHIP DESTROYED</h2>
     <div style="font-size: 18px; color: #38bdf8;">FINAL SCORE: <span id="final-score">0</span></div>
     <button class="btn btn-large" id="retry-btn" style="background: #ef4444; color: #fff; border: none;">RETRY MISSION</button>
-    <!-- Portfolio Return Link (Absolute Domain Target) -->
-    <a href="https://grishanbaskota.com.np" class="btn btn-large" style="border-color: #a855f7; color: #a855f7;">🏠 RETURN TO PORTFOLIO</a>
+    <a href="index.html" class="btn btn-large" style="border-color: #a855f7; color: #a855f7;">🏠 RETURN TO PORTFOLIO</a>
   </div>
 
   <!-- Mobile On-Screen Controls HUD -->
@@ -393,6 +409,17 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
 let isMobileMode = false;
+let screenShakeTimer = 0;
+
+function triggerVibration(pattern) {
+  if ('vibrate' in navigator) {
+    try { navigator.vibrate(pattern); } catch (e) {}
+  }
+}
+
+function triggerScreenShake(duration) {
+  screenShakeTimer = duration;
+}
 
 const WEAPONS_CATALOG = {
   blaster: { name: 'PLASMA BLASTER', maxAmmo: 30, fireRate: 180, reloadTime: 1400, color: '#38bdf8', desc: 'Balanced rapid plasma bolts' },
@@ -474,6 +501,8 @@ class Player {
     this.maxShield = 100;
     this.shield = 50;
     this.lastShotTime = 0;
+    this.rapidFireTimer = 0;
+    this.spreadTimer = 0;
   }
   update(dt) {
     if (keys['ArrowLeft'] || keys['KeyA']) this.vx -= this.accel;
@@ -494,6 +523,9 @@ class Player {
     this.x = Math.max(20, Math.min(canvas.width - 20, this.x));
     this.y = Math.max(30, Math.min(canvas.height - 30, this.y));
 
+    if (this.rapidFireTimer > 0) this.rapidFireTimer -= dt;
+    if (this.spreadTimer > 0) this.spreadTimer -= dt;
+
     weaponStates.forEach(slot => {
       const config = WEAPONS_CATALOG[slot.key];
       if (slot.isReloading) {
@@ -510,8 +542,9 @@ class Player {
     const activeState = weaponStates[activeSlotIndex];
     const activeConfig = WEAPONS_CATALOG[activeState.key];
     const wantToFire = keys['Space'] || keys['KeyK'] || (isMobileMode && mobileFiring);
+    const effectiveFireRate = this.rapidFireTimer > 0 ? activeConfig.fireRate * 0.5 : activeConfig.fireRate;
 
-    if (wantToFire && performance.now() - this.lastShotTime > activeConfig.fireRate) {
+    if (wantToFire && performance.now() - this.lastShotTime > effectiveFireRate) {
       if (activeState.ammo > 0 && !activeState.isReloading) {
         this.shoot(activeState.key);
         activeState.ammo--;
@@ -523,6 +556,8 @@ class Player {
   }
 
   takeDamage(amount) {
+    triggerVibration([80, 30, 80]);
+    triggerScreenShake(12);
     if (this.shield > 0) {
       this.shield -= amount;
       if (this.shield < 0) {
@@ -535,6 +570,7 @@ class Player {
     if (this.health <= 0) {
       this.health = 0;
       gameOver = true;
+      triggerVibration([200, 100, 300]);
       document.getElementById('final-score').innerText = score;
       document.getElementById('gameover-overlay').classList.add('active');
     }
@@ -542,9 +578,16 @@ class Player {
   }
 
   shoot(type) {
+    triggerVibration(15);
     const color = WEAPONS_CATALOG[type].color;
-    bullets.push(new Bullet(this.x - 8, this.y - 18, 0, -12, true, color));
-    bullets.push(new Bullet(this.x + 8, this.y - 18, 0, -12, true, color));
+    if (this.spreadTimer > 0 || type === 'spread') {
+      bullets.push(new Bullet(this.x - 10, this.y - 18, -2, -12, true, color));
+      bullets.push(new Bullet(this.x, this.y - 20, 0, -12, true, color));
+      bullets.push(new Bullet(this.x + 10, this.y - 18, 2, -12, true, color));
+    } else {
+      bullets.push(new Bullet(this.x - 8, this.y - 18, 0, -12, true, color));
+      bullets.push(new Bullet(this.x + 8, this.y - 18, 0, -12, true, color));
+    }
   }
 
   draw() {
@@ -569,19 +612,105 @@ class Player {
 }
 
 class Enemy {
-  constructor(x, y) {
+  constructor(x, y, type = 'standard') {
     this.x = x;
     this.y = y;
-    this.radius = 16;
-    this.speedY = Math.random() * 1.5 + 1;
-    this.health = 2;
+    this.type = type;
+    this.startX = x;
+    this.angle = 0;
+    this.lastShot = performance.now();
+
+    if (type === 'fast') {
+      this.radius = 12;
+      this.speedY = 3.2;
+      this.health = 1;
+      this.color = '#eab308';
+    } else if (type === 'heavy') {
+      this.radius = 24;
+      this.speedY = 0.9;
+      this.health = 6;
+      this.color = '#a855f7';
+    } else if (type === 'shooter') {
+      this.radius = 18;
+      this.speedY = 1.4;
+      this.health = 3;
+      this.color = '#10b981';
+    } else {
+      this.radius = 16;
+      this.speedY = 1.8;
+      this.health = 2;
+      this.color = '#ef4444';
+    }
   }
   update() {
     this.y += this.speedY;
+    if (this.type === 'fast') {
+      this.angle += 0.08;
+      this.x = this.startX + Math.sin(this.angle) * 45;
+    } else if (this.type === 'shooter') {
+      if (performance.now() - this.lastShot > 1800) {
+        bullets.push(new Bullet(this.x, this.y + this.radius, 0, 6, false, '#10b981'));
+        this.lastShot = performance.now();
+      }
+    }
   }
   draw() {
     ctx.save();
-    ctx.fillStyle = '#ef4444';
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class Obstacle {
+  constructor(x, y, type = 'asteroid') {
+    this.x = x;
+    this.y = y;
+    this.type = type;
+    this.radius = type === 'asteroid' ? Math.random() * 15 + 15 : 12;
+    this.speedY = type === 'asteroid' ? Math.random() * 1 + 0.8 : 1.5;
+    this.rot = 0;
+    this.rotSpeed = (Math.random() - 0.5) * 0.05;
+    this.health = type === 'asteroid' ? 4 : 1;
+  }
+  update() {
+    this.y += this.speedY;
+    this.rot += this.rotSpeed;
+  }
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.rot);
+    if (this.type === 'asteroid') {
+      ctx.fillStyle = '#64748b';
+      ctx.beginPath();
+      ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath();
+      ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+class PowerUp {
+  constructor(x, y, type) {
+    this.x = x;
+    this.y = y;
+    this.type = type; // 'health', 'shield', 'rapid', 'spread'
+    this.radius = 10;
+    this.speedY = 1.2;
+  }
+  update() { this.y += this.speedY; }
+  draw() {
+    ctx.save();
+    const colors = { health: '#10b981', shield: '#3b82f6', rapid: '#eab308', spread: '#a855f7' };
+    ctx.fillStyle = colors[this.type] || '#fff';
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
@@ -608,12 +737,23 @@ class Bullet {
 
 const player = new Player();
 let enemies = [];
+let obstacles = [];
+let powerups = [];
 let bullets = [];
 
 function updateHUD() {
   document.getElementById('health-bar').style.width = `${(player.health / player.maxHealth) * 100}%`;
   document.getElementById('shield-bar').style.width = `${(player.shield / player.maxShield) * 100}%`;
   document.getElementById('score-val').innerText = score;
+
+  const buffContainer = document.getElementById('active-buffs');
+  buffContainer.innerHTML = '';
+  if (player.rapidFireTimer > 0) {
+    buffContainer.innerHTML += `<div class="buff-tag">⚡ RAPID FIRE (${Math.ceil(player.rapidFireTimer/1000)}s)</div>`;
+  }
+  if (player.spreadTimer > 0) {
+    buffContainer.innerHTML += `<div class="buff-tag">🔱 TRIPLE SPREAD (${Math.ceil(player.spreadTimer/1000)}s)</div>`;
+  }
 }
 
 document.getElementById('select-pc').addEventListener('click', () => {
@@ -701,6 +841,8 @@ function startGame() {
   isPaused = false;
   score = 0;
   enemies = [];
+  obstacles = [];
+  powerups = [];
   bullets = [];
   player.reset();
   updateHUD();
@@ -723,50 +865,114 @@ function gameLoop(now) {
   const dt = now - lastFrameTime;
   lastFrameTime = now;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  if (screenShakeTimer > 0) {
+    screenShakeTimer--;
+    ctx.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6);
+  }
 
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   stars.forEach(s => { s.update(); s.draw(); });
 
   if (gameStarted && !isPaused && !gameOver) {
     player.update(dt);
     player.draw();
 
+    // Spawns
     if (Math.random() < 0.02) {
-      enemies.push(new Enemy(Math.random() * (canvas.width - 40) + 20, -20));
+      const types = ['standard', 'fast', 'heavy', 'shooter'];
+      const chosen = types[Math.floor(Math.random() * types.length)];
+      enemies.push(new Enemy(Math.random() * (canvas.width - 50) + 25, -30, chosen));
+    }
+    if (Math.random() < 0.008) {
+      obstacles.push(new Obstacle(Math.random() * (canvas.width - 40) + 20, -30, Math.random() < 0.6 ? 'asteroid' : 'mine'));
     }
 
+    // Bullets Update & Collision with Player
     bullets.forEach((b, bi) => {
       b.update();
       b.draw();
-      if (b.y < -10) bullets.splice(bi, 1);
+      if (!b.isPlayer) {
+        if (Math.hypot(player.x - b.x, player.y - b.y) < b.radius + 15) {
+          player.takeDamage(12);
+          bullets.splice(bi, 1);
+        }
+      }
+      if (b.y < -10 || b.y > canvas.height + 10) bullets.splice(bi, 1);
     });
 
+    // Obstacles Collision
+    obstacles.forEach((obs, oi) => {
+      obs.update();
+      obs.draw();
+
+      if (Math.hypot(player.x - obs.x, player.y - obs.y) < obs.radius + 15) {
+        player.takeDamage(obs.type === 'mine' ? 30 : 20);
+        obstacles.splice(oi, 1);
+      }
+
+      bullets.forEach((b, bi) => {
+        if (b.isPlayer && Math.hypot(b.x - obs.x, b.y - obs.y) < obs.radius + b.radius) {
+          obs.health--;
+          bullets.splice(bi, 1);
+          if (obs.health <= 0) {
+            score += 15;
+            obstacles.splice(oi, 1);
+          }
+        }
+      });
+
+      if (obs.y > canvas.height + 40) obstacles.splice(oi, 1);
+    });
+
+    // Powerups Update
+    powerups.forEach((p, pi) => {
+      p.update();
+      p.draw();
+      if (Math.hypot(player.x - p.x, player.y - p.y) < p.radius + 18) {
+        triggerVibration([40, 40]);
+        if (p.type === 'health') player.health = Math.min(player.maxHealth, player.health + 35);
+        if (p.type === 'shield') player.shield = Math.min(player.maxShield, player.shield + 40);
+        if (p.type === 'rapid') player.rapidFireTimer = 6000;
+        if (p.type === 'spread') player.spreadTimer = 7000;
+        updateHUD();
+        powerups.splice(pi, 1);
+      }
+      if (p.y > canvas.height + 20) powerups.splice(pi, 1);
+    });
+
+    // Enemies Collision
     enemies.forEach((e, ei) => {
       e.update();
       e.draw();
 
-      let dist = Math.hypot(player.x - e.x, player.y - e.y);
-      if (dist < e.radius + 15) {
-        player.takeDamage(20);
+      if (Math.hypot(player.x - e.x, player.y - e.y) < e.radius + 15) {
+        player.takeDamage(25);
         enemies.splice(ei, 1);
       }
 
       bullets.forEach((b, bi) => {
-        if (Math.hypot(b.x - e.x, b.y - e.y) < e.radius + b.radius) {
+        if (b.isPlayer && Math.hypot(b.x - e.x, b.y - e.y) < e.radius + b.radius) {
           e.health--;
           bullets.splice(bi, 1);
           if (e.health <= 0) {
-            score += 10;
+            triggerVibration(20);
+            score += e.type === 'heavy' ? 30 : 10;
+            if (Math.random() < 0.3) {
+              const pTypes = ['health', 'shield', 'rapid', 'spread'];
+              powerups.push(new PowerUp(e.x, e.y, pTypes[Math.floor(Math.random() * pTypes.length)]));
+            }
             updateHUD();
             enemies.splice(ei, 1);
           }
         }
       });
 
-      if (e.y > canvas.height + 20) enemies.splice(ei, 1);
+      if (e.y > canvas.height + 30) enemies.splice(ei, 1);
     });
   }
 
+  ctx.restore();
   requestAnimationFrame(gameLoop);
 }
 
